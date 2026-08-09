@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: 4All SEO Bridge
- * Description: Purpose-built REST API (namespace 4all/v1) for 4All Digital's SEO automation tools. Writes Yoast/RankMath SEO title + meta description and image alt text, with server-side URL→post resolution and capability gating. Companion to the 4all-automations CLIs (wp-seo-push, wp-alt-push).
- * Version: 0.1.0
+ * Description: Lets 4All Digital's tools securely update SEO titles, meta descriptions, and image alt text on this site.
+ * Version: 0.1.1
  * Author: 4All Digital
  * License: GPL-2.0-or-later
  */
@@ -11,7 +11,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'FOURALL_SEO_BRIDGE_VERSION', '0.1.0' );
+define( 'FOURALL_SEO_BRIDGE_VERSION', '0.1.1' );
 
 add_action( 'rest_api_init', function () {
 	register_rest_route( '4all/v1', '/ping', array(
