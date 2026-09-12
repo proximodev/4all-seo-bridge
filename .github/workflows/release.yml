@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '7.4'
+      - name: Lint
+        run: php -l 4all-seo-bridge.php
+
+      - name: Read versions
+        id: v
+        run: |
+          H=$(grep -m1 -E '^\s*\*\s*Version:' 4all-seo-bridge.php | sed -E 's/.*Version:\s*//; s/\s+$//')
+          T="${GITHUB_REF_NAME#v}"
+          echo "header=$H tag=$T"
+          test "$H" = "$T" || { echo "Tag $GITHUB_REF_NAME does not match header Version $H"; exit 1; }
+          REQ=$(grep -m1 -E '^\s*\*\s*Requires at least:' 4all-seo-bridge.php | sed -E 's/.*:\s*//; s/\s+$//')
+          PHPV=$(grep -m1 -E '^\s*\*\s*Requires PHP:' 4all-seo-bridge.php | sed -E 's/.*:\s*//; s/\s+$//')
+          TESTED=$(grep -m1 -E '^\s*\*\s*Tested up to:' 4all-seo-bridge.php | sed -E 's/.*:\s*//; s/\s+$//')
+          echo "version=$H" >> "$GITHUB_OUTPUT"
+          echo "requires=${REQ:-6.0}" >> "$GITHUB_OUTPUT"
+          echo "requires_php=${PHPV:-7.4}" >> "$GITHUB_OUTPUT"
+          echo "tested=${TESTED:-6.6}" >> "$GITHUB_OUTPUT"
+
+      - name: Build zip (unpacks to 4all-seo-bridge/)
+        run: |
+          mkdir -p build/4all-seo-bridge
+          cp 4all-seo-bridge.php LICENSE README.md CHANGELOG.md build/4all-seo-bridge/
+          (cd build && zip -qr ../4all-seo-bridge.zip 4all-seo-bridge)
+          unzip -l 4all-seo-bridge.zip
+
+      - name: Build manifest.json
+        run: |
+          cat > manifest.json <<EOF
+          {
+            "name": "4All SEO Bridge",
+            "slug": "4all-seo-bridge",
+            "version": "${{ steps.v.outputs.version }}",
+            "download_url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/4all-seo-bridge.zip",
+            "requires": "${{ steps.v.outputs.requires }}",
+            "requires_php": "${{ steps.v.outputs.requires_php }}",
+            "tested": "${{ steps.v.outputs.tested }}",
+            "last_updated": "$(date -u +%Y-%m-%d)",
+            "homepage": "https://github.com/${{ github.repository }}",
+            "changelog_url": "https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md"
+          }
+          EOF
+          cat manifest.json
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            4all-seo-bridge.zip
+            manifest.json
+          generate_release_notes: true

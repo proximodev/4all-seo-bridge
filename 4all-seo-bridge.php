@@ -1,10 +1,17 @@
 <?php
 /**
  * Plugin Name: 4All SEO Bridge
+ * Plugin URI: https://github.com/proximodev/4all-seo-bridge
+ * Update URI: https://github.com/proximodev/4all-seo-bridge
  * Description: Lets 4All Digital's tools securely read and update SEO titles, meta descriptions, and image alt text on this site.
  * Version: 0.2.0
+ * Requires at least: 6.0
+ * Requires PHP: 7.4
+ * Tested up to: 6.6
  * Author: 4All Digital
+ * Author URI: https://4all.digital
  * License: GPL-2.0-or-later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -12,6 +19,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 define( 'FOURALL_SEO_BRIDGE_VERSION', '0.2.0' );
+define( 'FOURALL_SEO_BRIDGE_UPDATE_URI', 'https://github.com/proximodev/4all-seo-bridge' );
+define( 'FOURALL_SEO_BRIDGE_MANIFEST_URL', 'https://github.com/proximodev/4all-seo-bridge/releases/latest/download/manifest.json' );
+if ( ! defined( 'FOURALL_SEO_BRIDGE_AUTO_UPDATE' ) ) {
+	define( 'FOURALL_SEO_BRIDGE_AUTO_UPDATE', true );
+}
 
 add_action( 'rest_api_init', function () {
 	register_rest_route( '4all/v1', '/ping', array(
@@ -305,3 +317,112 @@ function fourall_seo_bridge_log( $msg ) {
 	$user = wp_get_current_user();
 	error_log( '[4all-seo-bridge] ' . ( $user ? $user->user_login : '?' ) . ' ' . $msg );
 }
+
+// ------------------------------------------------------------------
+// Self-update through WordPress's plugin updater (core, since 5.8).
+//
+// The plugin header declares `Update URI` on github.com. When WordPress
+// checks for plugin updates it asks `update_plugins_github.com` for this
+// plugin; we answer with the latest release's manifest. Core compares the
+// manifest version with the installed one and shows the update (or
+// applies it, when auto-update is on). The manifest and zip are release
+// assets built by this repository's Release workflow.
+// ------------------------------------------------------------------
+
+/** Fetch and cache (12 h) the latest release manifest. Null on any problem. */
+function fourall_seo_bridge_manifest( $force = false ) {
+	$key = 'fourall_seo_bridge_manifest';
+	if ( ! $force ) {
+		$cached = get_site_transient( $key );
+		if ( is_array( $cached ) ) {
+			return $cached;
+		}
+	}
+	$res = wp_remote_get( FOURALL_SEO_BRIDGE_MANIFEST_URL, array(
+		'timeout' => 10,
+		'headers' => array( 'Accept' => 'application/json' ),
+	) );
+	if ( is_wp_error( $res ) || 200 !== (int) wp_remote_retrieve_response_code( $res ) ) {
+		set_site_transient( $key, array(), HOUR_IN_SECONDS ); // back off for an hour
+		return null;
+	}
+	$data = json_decode( (string) wp_remote_retrieve_body( $res ), true );
+	if ( ! is_array( $data ) || empty( $data['version'] ) || empty( $data['download_url'] ) ) {
+		set_site_transient( $key, array(), HOUR_IN_SECONDS );
+		return null;
+	}
+	set_site_transient( $key, $data, 12 * HOUR_IN_SECONDS );
+	return $data;
+}
+
+/** Answer WordPress's update check for this plugin with the release manifest. */
+function fourall_seo_bridge_update_check( $update, $plugin_data, $plugin_file, $locales ) {
+	if ( plugin_basename( __FILE__ ) !== $plugin_file ) {
+		return $update;
+	}
+	$m = fourall_seo_bridge_manifest();
+	if ( ! $m ) {
+		return $update;
+	}
+	return array(
+		'id'           => FOURALL_SEO_BRIDGE_UPDATE_URI,
+		'slug'         => dirname( plugin_basename( __FILE__ ) ),
+		'plugin'       => $plugin_file,
+		'version'      => (string) $m['version'],
+		'url'          => isset( $m['homepage'] ) ? (string) $m['homepage'] : FOURALL_SEO_BRIDGE_UPDATE_URI,
+		'package'      => (string) $m['download_url'],
+		'requires'     => isset( $m['requires'] ) ? (string) $m['requires'] : '6.0',
+		'requires_php' => isset( $m['requires_php'] ) ? (string) $m['requires_php'] : '7.4',
+		'tested'       => isset( $m['tested'] ) ? (string) $m['tested'] : '',
+		'icons'        => array(),
+		'banners'      => array(),
+	);
+}
+add_filter( 'update_plugins_github.com', 'fourall_seo_bridge_update_check', 10, 4 );
+
+/** Minimal "View details" panel so the update row has something to show. */
+function fourall_seo_bridge_plugin_info( $result, $action, $args ) {
+	if ( 'plugin_information' !== $action || empty( $args->slug ) || dirname( plugin_basename( __FILE__ ) ) !== $args->slug ) {
+		return $result;
+	}
+	$m = fourall_seo_bridge_manifest();
+	if ( ! $m ) {
+		return $result;
+	}
+	return (object) array(
+		'name'          => isset( $m['name'] ) ? $m['name'] : '4All SEO Bridge',
+		'slug'          => $args->slug,
+		'version'       => (string) $m['version'],
+		'author'        => '4All Digital',
+		'homepage'      => isset( $m['homepage'] ) ? $m['homepage'] : FOURALL_SEO_BRIDGE_UPDATE_URI,
+		'requires'      => isset( $m['requires'] ) ? $m['requires'] : '6.0',
+		'requires_php'  => isset( $m['requires_php'] ) ? $m['requires_php'] : '7.4',
+		'tested'        => isset( $m['tested'] ) ? $m['tested'] : '',
+		'last_updated'  => isset( $m['last_updated'] ) ? $m['last_updated'] : '',
+		'download_link' => (string) $m['download_url'],
+		'sections'      => array(
+			'description' => 'Lets 4All Digital\'s tools securely read and update SEO titles, meta descriptions, and image alt text on this site.',
+			'changelog'   => isset( $m['changelog_url'] ) ? '<a href="' . esc_url( $m['changelog_url'] ) . '">Changelog</a>' : '',
+		),
+	);
+}
+add_filter( 'plugins_api', 'fourall_seo_bridge_plugin_info', 10, 3 );
+
+/** Auto-update this plugin unless the site opts out in wp-config.php. */
+function fourall_seo_bridge_auto_update( $update, $item ) {
+	if ( isset( $item->plugin ) && plugin_basename( __FILE__ ) === $item->plugin ) {
+		return (bool) FOURALL_SEO_BRIDGE_AUTO_UPDATE;
+	}
+	return $update;
+}
+add_filter( 'auto_update_plugin', 'fourall_seo_bridge_auto_update', 10, 2 );
+
+/** Forget the cached manifest when the plugin is (re)activated or upgraded. */
+register_activation_hook( __FILE__, function () {
+	delete_site_transient( 'fourall_seo_bridge_manifest' );
+} );
+add_action( 'upgrader_process_complete', function ( $upgrader, $options ) {
+	if ( isset( $options['type'] ) && 'plugin' === $options['type'] ) {
+		delete_site_transient( 'fourall_seo_bridge_manifest' );
+	}
+}, 10, 2 );
