@@ -15,11 +15,19 @@ jobs:
           php-version: '7.4'
       - name: php -l (PHP 7.4 floor)
         run: php -l 4all-seo-bridge.php
+      - name: Stub tests (PHP 7.4)
+        run: |
+          set -eo pipefail
+          for m in yoast rankmath none; do SEO=$m php tests/run.php | tail -1; done
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
       - name: php -l (PHP 8.3)
         run: php -l 4all-seo-bridge.php
+      - name: Stub tests (PHP 8.3)
+        run: |
+          set -eo pipefail
+          for m in yoast rankmath none; do SEO=$m php -d error_reporting=E_ALL -d display_errors=1 tests/run.php | tail -1; done
       - name: Header and constant versions agree
         run: |
           H=$(grep -m1 -E '^\s*\*\s*Version:' 4all-seo-bridge.php | sed -E 's/.*Version:\s*//; s/\s+$//')

@@ -8,13 +8,14 @@ Claude Code session).
 | Item | Status |
 |---|---|
 | Plugin code (0.2.0: `GET /seo`, `id` targets, `?p=` and staging-path resolution, post facts, softer cleaning, write log, alt suffix parity) | **done**, in `main` |
+| 0.2.1: a present `?p=` / `?page_id=` / `?attachment_id=` is authoritative (`bad_query_var` 400 / `not_found` 404, never the front page); stub tests in CI | **in the working tree, uncommitted, untagged** (2026-09-12) — commit, then `git tag v0.2.1 && git push origin main --tags` |
 | Self-update (`Update URI` + `update_plugins_github.com` reading the latest release's `manifest.json`; details panel; auto-update on by default) | **done**, in 0.2.0 |
 | CI: lint on push/PR (PHP 7.4 + 8.3, header/constant version check) | **done**, green |
 | CI: release on `v*` tag (lint, tag = header check, zip + manifest attached) | **done**; `v0.2.0` released, assets fetch anonymously |
 | Client sites | **all still on 0.1.1** — each needs one manual upload of 0.2.0; afterwards updates arrive through WordPress |
 | Live verification of 0.2.0 on a WordPress site (`GET /seo`, a `?p=` push, the Plugins screen offering an update) | **not done** |
 | Yoast indexables check (does a pushed title render after cache purge?) | **not done**; needs a live Yoast site |
-| Local PHP for linting before pushing | **optional** — CI lints every push; see below |
+| Local PHP for linting before pushing | **done on Doug's machine** (PHP 8.4.24 via winget, 2026-09-12); CI still lints every push; see below |
 
 **No further plugin changes are required.** Do not re-implement anything
 from the automations repo's brief; it is all here.
@@ -44,9 +45,9 @@ site's bridge version on every run and warn when it is below
 
 ## Verifying the update path once one site has 0.2.0
 
-1. Make a trivial change (or none), bump the version to `0.2.1` in **both**
-   the `Version:` header and `FOURALL_SEO_BRIDGE_VERSION`, add a CHANGELOG
-   line, commit, `git tag v0.2.1 && git push origin main --tags`.
+1. 0.2.1 is already bumped in **both** the `Version:` header and
+   `FOURALL_SEO_BRIDGE_VERSION`, with a CHANGELOG entry (the `?p=` fix).
+   Commit, then `git tag v0.2.1 && git push origin main --tags`.
 2. Wait for the Release workflow (about half a minute); confirm
    https://github.com/proximodev/4all-seo-bridge/releases/latest/download/manifest.json
    says `0.2.1`.
@@ -54,9 +55,10 @@ site's bridge version on every run and warn when it is below
    list 0.2.1 with "View details". Update (or let auto-update run) and
    re-check `/ping`.
 
-If the update does not appear: the site caches the manifest for 12 hours
-(`fourall_seo_bridge_manifest` site transient); deactivate/reactivate the
-plugin to clear it, or check that the site can reach `github.com` and
+If the update does not appear: a site still on 0.2.0 caches the manifest
+for 12 hours (`fourall_seo_bridge_manifest` site transient); deactivate/
+reactivate the plugin to clear it. From 0.2.1, **Check again** clears the
+cache itself. Otherwise check that the site can reach `github.com` and
 `release-assets.githubusercontent.com` (some hosts block outbound HTTP).
 
 ## Releasing (routine)
@@ -74,11 +76,16 @@ plugin to clear it, or check that the site can reach `github.com` and
 
 ## Getting PHP on the dev machine (optional but handy)
 
-CI is the gate; local PHP just shortens the loop. Any one of:
+CI is the gate; local PHP just shortens the loop. Installed on Doug's
+machine on 2026-09-12: `winget install --id PHP.PHP.8.4` (the `PHP.PHP.8.3`
+winget manifest pointed at a php.net URL that 404s; 8.4 installed fine).
+It lands in `%LOCALAPPDATA%\Microsoft\WinGet\Packages\PHP.PHP.8.4_*\`
+and winget adds a `php` alias to PATH (open a new terminal). On a fresh
+machine, any one of:
 
 - **winget:** `winget search php` and install the current 8.x package, e.g.
-  `winget install --id PHP.PHP.8.3` (confirm the exact id from the search
-  output).
+  `winget install --id PHP.PHP.8.4` (confirm the exact id from the search
+  output; if a download 404s, try the next minor).
 - **Scoop:** `scoop install php`.
 - **Manual:** download the Thread Safe x64 zip from
   https://windows.php.net/download/, unzip to `C:\php`, add `C:\php` to
@@ -89,7 +96,15 @@ Then, in this project:
 ```
 php -v                       # 8.x
 php -l 4all-seo-bridge.php   # "No syntax errors detected"
+php tests/run.php            # stub tests, SEO=yoast (also SEO=rankmath / SEO=none)
 ```
+
+`tests/run.php` stubs the WordPress functions the plugin calls and drives
+every handler and filter directly (resolve, clean, target, ping, GET/POST
+`/seo`, `/alt`, manifest caching and back-off, update check, details panel,
+auto-update, cache invalidation). It runs in CI on PHP 7.4 and 8.3 and is
+not shipped in the release zip. It cannot see what real `esc_url_raw`,
+`url_to_postid` or Yoast do — that is what the live checks are for.
 
 Optional WordPress coding-standards check (needs Composer — `winget install
 Composer.Composer` or https://getcomposer.org/):
@@ -112,7 +127,8 @@ is installed (Settings → PHP → CLI Interpreter).
 README.md             install, updates, endpoints, releasing
 CHANGELOG.md
 LICENSE               GPL-2.0
-.github/workflows/    lint.yml (push/PR), release.yml (v* tags)
+.github/workflows/    lint.yml (push/PR: php -l + tests/run.php), release.yml (v* tags)
+tests/run.php         stub-based tests, no WordPress needed (not in the zip)
 HANDOFF.md            this file
 ```
 
@@ -140,3 +156,11 @@ folder name WordPress expects for in-place updates.
 - Decide whether auto-update should stay on by default for client sites,
   or be opt-in per site (currently on; one constant flips it).
 - Nice to have: `phpcs` in the lint workflow once the file passes it.
+- Which sites have the plugin: nothing reports today (GitHub only shows
+  aggregate asset download counts). Short term: sweep `/ping` over the
+  hosts in the automations repo's `wp-sites.json`; that file is per
+  machine and gitignored, so sync one master copy between computers.
+  Long term (a later version, not 0.2.1): serve the manifest URL from
+  something 4All controls that redirects to the GitHub asset. WordPress
+  sends `WordPress/<ver>; <home_url>` as User-Agent, so its access log is
+  a complete inventory with no plugin phone-home code.

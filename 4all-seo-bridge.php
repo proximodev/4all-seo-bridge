@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/proximodev/4all-seo-bridge
  * Update URI: https://github.com/proximodev/4all-seo-bridge
  * Description: Lets 4All Digital's tools securely read and update SEO titles, meta descriptions, and image alt text on this site.
- * Version: 0.2.0
+ * Version: 0.2.1
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Tested up to: 6.6
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'FOURALL_SEO_BRIDGE_VERSION', '0.2.0' );
+define( 'FOURALL_SEO_BRIDGE_VERSION', '0.2.1' );
 define( 'FOURALL_SEO_BRIDGE_UPDATE_URI', 'https://github.com/proximodev/4all-seo-bridge' );
 define( 'FOURALL_SEO_BRIDGE_MANIFEST_URL', 'https://github.com/proximodev/4all-seo-bridge/releases/latest/download/manifest.json' );
 if ( ! defined( 'FOURALL_SEO_BRIDGE_AUTO_UPDATE' ) ) {
@@ -89,6 +89,10 @@ function fourall_seo_bridge_seo_plugin() {
  *
  *   1. `?p=`, `?page_id=`, `?attachment_id=` query vars win — this is how
  *      drafts (which have no public permalink) are addressed. Any status.
+ *      A present query var is authoritative: a value that is not a
+ *      positive integer is `bad_query_var`, an unknown id is `not_found`.
+ *      Neither falls through to the path (so `/?p=abc` is never the
+ *      front page).
  *   2. Empty path → the static front page, or 0 for a posts-page front.
  *   3. `url_to_postid()` (published permalinks, nested pages, CPTs).
  *   4. When the request host differs from this site's host (a production
@@ -106,10 +110,15 @@ function fourall_seo_bridge_resolve( $url ) {
 		parse_str( $parts['query'], $query );
 	}
 	foreach ( array( 'p', 'page_id', 'attachment_id' ) as $var ) {
-		if ( ! empty( $query[ $var ] ) && ctype_digit( (string) $query[ $var ] ) ) {
-			$id = (int) $query[ $var ];
-			return get_post( $id ) ? array( $id, 'query_var' ) : array( 0, 'not_found' );
+		if ( ! array_key_exists( $var, $query ) ) {
+			continue;
 		}
+		$raw = is_scalar( $query[ $var ] ) ? trim( (string) $query[ $var ] ) : '';
+		if ( '' === $raw || ! ctype_digit( $raw ) || 0 === (int) $raw ) {
+			return array( 0, 'bad_query_var' );
+		}
+		$id = (int) $raw;
+		return get_post( $id ) ? array( $id, 'query_var' ) : array( 0, 'not_found' );
 	}
 
 	$path = isset( $parts['path'] ) ? (string) $parts['path'] : '';
@@ -182,6 +191,9 @@ function fourall_seo_bridge_target( WP_REST_Request $req ) {
 		if ( ! $id ) {
 			if ( 'blog_index_not_supported' === $reason ) {
 				return new WP_Error( 'blog_index_not_supported', 'The front page is the posts index; its SEO title lives in the SEO plugin options, not on a post.', array( 'status' => 422 ) );
+			}
+			if ( 'bad_query_var' === $reason ) {
+				return new WP_Error( 'bad_query_var', 'The ?p= / ?page_id= / ?attachment_id= value must be a positive post id.', array( 'status' => 400 ) );
 			}
 			return new WP_Error( 'not_found', 'Could not resolve URL to a post/page.', array( 'status' => 404 ) );
 		}
@@ -421,6 +433,20 @@ add_filter( 'auto_update_plugin', 'fourall_seo_bridge_auto_update', 10, 2 );
 register_activation_hook( __FILE__, function () {
 	delete_site_transient( 'fourall_seo_bridge_manifest' );
 } );
+
+/**
+ * Dashboard → Updates → "Check again" (update-core.php?force-check=1):
+ * drop the cached manifest before core runs its check on that same page
+ * load, so a release published in the last 12 hours shows up immediately.
+ * Ordinary visits to the Updates screen, the Plugins screen and cron keep
+ * using the cache.
+ */
+function fourall_seo_bridge_force_check() {
+	if ( ! empty( $_GET['force-check'] ) && current_user_can( 'update_plugins' ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only cache clear on core's own force-check screen.
+		delete_site_transient( 'fourall_seo_bridge_manifest' );
+	}
+}
+add_action( 'load-update-core.php', 'fourall_seo_bridge_force_check', 5 );
 add_action( 'upgrader_process_complete', function ( $upgrader, $options ) {
 	if ( isset( $options['type'] ) && 'plugin' === $options['type'] ) {
 		delete_site_transient( 'fourall_seo_bridge_manifest' );

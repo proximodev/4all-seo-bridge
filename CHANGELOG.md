@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 — 2026-09-12
+
+- A `?p=` / `?page_id=` / `?attachment_id=` query var is authoritative: a
+  non-numeric or zero value returns `bad_query_var` (400) and an unknown id
+  `not_found` (404). Previously `https://host/?p=abc` fell through to the
+  static front page.
+- **Dashboard → Updates → Check again** clears the cached release manifest
+  first, so a release published in the last 12 hours appears on that click
+  instead of after the cache expires.
+- Stub-based test suite (`tests/run.php`) run by CI on PHP 7.4 and 8.3.
+
 ## 0.2.0 — 2026-09-12
 
 - Moved to its own repository; self-updating through WordPress's plugin
