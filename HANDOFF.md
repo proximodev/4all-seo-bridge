@@ -8,7 +8,7 @@ Claude Code session).
 | Item | Status |
 |---|---|
 | Plugin code (0.2.0: `GET /seo`, `id` targets, `?p=` and staging-path resolution, post facts, softer cleaning, write log, alt suffix parity) | **done**, in `main` |
-| 0.2.1: a present `?p=` / `?page_id=` / `?attachment_id=` is authoritative (`bad_query_var` 400 / `not_found` 404, never the front page); stub tests in CI | **in the working tree, uncommitted, untagged** (2026-09-12) — commit, then `git tag v0.2.1 && git push origin main --tags` |
+| 0.2.1: a present `?p=` / `?page_id=` / `?attachment_id=` is authoritative (`bad_query_var` 400 / `not_found` 404, never the front page); stub tests in CI | **committed** (`4c5043a`, `6f6714f`), **untagged** (2026-09-12) — `git tag v0.2.1 && git push origin main --tags` when ready |
 | Self-update (`Update URI` + `update_plugins_github.com` reading the latest release's `manifest.json`; details panel; auto-update on by default) | **done**, in 0.2.0 |
 | CI: lint on push/PR (PHP 7.4 + 8.3, header/constant version check) | **done**, green |
 | CI: release on `v*` tag (lint, tag = header check, zip + manifest attached) | **done**; `v0.2.0` released, assets fetch anonymously |
@@ -45,9 +45,8 @@ site's bridge version on every run and warn when it is below
 
 ## Verifying the update path once one site has 0.2.0
 
-1. 0.2.1 is already bumped in **both** the `Version:` header and
-   `FOURALL_SEO_BRIDGE_VERSION`, with a CHANGELOG entry (the `?p=` fix).
-   Commit, then `git tag v0.2.1 && git push origin main --tags`.
+1. 0.2.1 is committed with the version bumped in **both** places and a
+   CHANGELOG entry. `git tag v0.2.1 && git push origin main --tags`.
 2. Wait for the Release workflow (about half a minute); confirm
    https://github.com/proximodev/4all-seo-bridge/releases/latest/download/manifest.json
    says `0.2.1`.
