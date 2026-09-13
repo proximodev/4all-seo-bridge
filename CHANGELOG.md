@@ -9,7 +9,15 @@
 - **Dashboard → Updates → Check again** clears the cached release manifest
   first, so a release published in the last 12 hours appears on that click
   instead of after the cache expires.
-- Stub-based test suite (`tests/run.php`) run by CI on PHP 7.4 and 8.3.
+- `after` reports what the SEO plugin actually stored after a write (Yoast
+  escapes `<` and `&` on its keys); a stored value that decodes to the
+  requested one counts as unchanged, so such rows do not re-push every run.
+- `FOURALL_SEO_BRIDGE_MANIFEST_URL` can be overridden in `wp-config.php`
+  to test a release candidate on staging.
+- `Tested up to` 7.1 (exercised on WordPress 7.1 locally).
+- Stub-based test suite (`tests/run.php`) run by CI on PHP 7.4 and 8.3;
+  live matrix (`tests/live.mjs`) and a local WordPress (`.wp-env.json`);
+  `TESTING.md`.
 
 ## 0.2.0 — 2026-09-12
 

@@ -7,7 +7,7 @@
  * Version: 0.2.1
  * Requires at least: 6.0
  * Requires PHP: 7.4
- * Tested up to: 6.6
+ * Tested up to: 7.1
  * Author: 4All Digital
  * Author URI: https://4all.digital
  * License: GPL-2.0-or-later
@@ -20,7 +20,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 define( 'FOURALL_SEO_BRIDGE_VERSION', '0.2.1' );
 define( 'FOURALL_SEO_BRIDGE_UPDATE_URI', 'https://github.com/proximodev/4all-seo-bridge' );
-define( 'FOURALL_SEO_BRIDGE_MANIFEST_URL', 'https://github.com/proximodev/4all-seo-bridge/releases/latest/download/manifest.json' );
+if ( ! defined( 'FOURALL_SEO_BRIDGE_MANIFEST_URL' ) ) { // overridable in wp-config.php to test a release candidate on staging
+	define( 'FOURALL_SEO_BRIDGE_MANIFEST_URL', 'https://github.com/proximodev/4all-seo-bridge/releases/latest/download/manifest.json' );
+}
 if ( ! defined( 'FOURALL_SEO_BRIDGE_AUTO_UPDATE' ) ) {
 	define( 'FOURALL_SEO_BRIDGE_AUTO_UPDATE', true );
 }
@@ -175,6 +177,20 @@ function fourall_seo_bridge_clean( $val ) {
 	return trim( (string) $val );
 }
 
+/**
+ * Is the stored value already the requested one? Yoast and RankMath run
+ * their own sanitizers on their meta keys (Yoast stores "a < b" as
+ * "a &lt; b"), so a byte-equal compare would report such a value as
+ * changed on every push. Equal, or equal once entities are decoded, counts
+ * as already applied.
+ */
+function fourall_seo_bridge_same( $stored, $wanted ) {
+	if ( $stored === $wanted ) {
+		return true;
+	}
+	return html_entity_decode( $stored, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) === $wanted;
+}
+
 /** Resolve the `url` / `id` request params to a post id or a WP_Error. */
 function fourall_seo_bridge_target( WP_REST_Request $req ) {
 	$id = (int) $req->get_param( 'id' );
@@ -264,10 +280,12 @@ function fourall_seo_bridge_seo( WP_REST_Request $req ) {
 			continue;
 		}
 		$val = fourall_seo_bridge_clean( $val );
-		$after[ $slot ]   = $val;
-		$changed[ $slot ] = ( $val !== $cur );
+		$changed[ $slot ] = ! fourall_seo_bridge_same( $cur, $val );
+		$after[ $slot ]   = $changed[ $slot ] ? $val : $cur; // already applied → what is stored
 		if ( $changed[ $slot ] && ! $dry ) {
 			update_post_meta( $id, $key, wp_slash( $val ) );
+			// Report what the SEO plugin actually stored (its sanitizer may differ).
+			$after[ $slot ] = (string) get_post_meta( $id, $key, true );
 		}
 	}
 
@@ -309,9 +327,12 @@ function fourall_seo_bridge_alt( WP_REST_Request $req ) {
 	$dry     = (bool) $req->get_param( 'dry_run' );
 	$cur     = (string) get_post_meta( $id, '_wp_attachment_image_alt', true );
 	$val     = fourall_seo_bridge_clean( (string) $req->get_param( 'alt' ) );
-	$changed = ( $val !== $cur );
-	if ( $changed && ! $dry ) {
+	$changed = ! fourall_seo_bridge_same( $cur, $val );
+	if ( ! $changed ) {
+		$val = $cur; // already applied → what is stored
+	} elseif ( ! $dry ) {
 		update_post_meta( $id, '_wp_attachment_image_alt', wp_slash( $val ) );
+		$val = (string) get_post_meta( $id, '_wp_attachment_image_alt', true );
 		fourall_seo_bridge_log( sprintf( 'alt #%d', $id ) );
 	}
 

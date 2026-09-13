@@ -100,7 +100,12 @@ function wp_strip_all_tags( $s, $remove_breaks = false ) {
 function esc_url_raw( $u ) { return trim( (string) $u ); }
 function esc_url( $u ) { return htmlspecialchars( (string) $u, ENT_QUOTES ); }
 function get_post_meta( $id, $key, $single = false ) { return $GLOBALS['site']['meta'][ $id ][ $key ] ?? ''; }
-function update_post_meta( $id, $key, $val ) { $GLOBALS['site']['meta'][ $id ][ $key ] = wp_unslash( $val ); return true; }
+function update_post_meta( $id, $key, $val ) {
+	$val = wp_unslash( $val );
+	if ( ! empty( $GLOBALS['site']['meta_sanitizer'] ) ) { $val = call_user_func( $GLOBALS['site']['meta_sanitizer'], $key, $val ); }
+	$GLOBALS['site']['meta'][ $id ][ $key ] = $val;
+	return true;
+}
 function wp_slash( $v ) { return addslashes( $v ); }
 function wp_unslash( $v ) { return stripslashes( $v ); }
 function wp_get_current_user() { return (object) array( 'user_login' => 'tester' ); }
@@ -289,6 +294,21 @@ if ( ! $seo ) {
 	same( array( 'title' => false, 'metadesc' => true ), $r['changed'], 'empty string clears metadesc; omitted title untouched' );
 	same( '', $GLOBALS['site']['meta'][1][ $seo['metadesc'] ], 'metadesc cleared' );
 	same( 'New title', $GLOBALS['site']['meta'][1][ $seo['title'] ], 'title still there' );
+
+	// SEO plugin sanitizer escapes on its keys (Yoast does this): after = stored, repeat push = unchanged
+	$GLOBALS['site']['meta_sanitizer'] = function ( $key, $val ) { return 0 === strpos( $key, '_yoast' ) || 0 === strpos( $key, 'rank_math' ) ? htmlspecialchars( $val, ENT_NOQUOTES ) : $val; };
+	$r = fourall_seo_bridge_seo( new WP_REST_Request( array( 'id' => 1, 'metadesc' => 'a < b & c' ) ) );
+	same( true, $r['changed']['metadesc'], 'escaping sanitizer: first push changed' );
+	same( 'a &lt; b &amp; c', $r['after']['metadesc'], 'escaping sanitizer: after reports the stored (escaped) value' );
+	$r = fourall_seo_bridge_seo( new WP_REST_Request( array( 'id' => 1, 'metadesc' => 'a < b & c' ) ) );
+	same( false, $r['changed']['metadesc'], 'escaping sanitizer: same value again -> unchanged (entity-decoded compare)' );
+	same( 'a &lt; b &amp; c', $r['after']['metadesc'], '... after still the stored value' );
+	$r = fourall_seo_bridge_seo( new WP_REST_Request( array( 'id' => 1, 'metadesc' => 'a < b & c', 'dry_run' => true ) ) );
+	same( false, $r['changed']['metadesc'], 'escaping sanitizer: dry run agrees it is unchanged' );
+	$r = fourall_seo_bridge_seo( new WP_REST_Request( array( 'id' => 1, 'metadesc' => 'plain' ) ) );
+	same( 'plain', $r['after']['metadesc'], 'escaping sanitizer: unescaped value round-trips' );
+	$GLOBALS['site']['meta_sanitizer'] = null;
+	$r = fourall_seo_bridge_seo( new WP_REST_Request( array( 'id' => 1, 'metadesc' => '' ) ) );
 
 	// draft via ?p=
 	$r = fourall_seo_bridge_seo( new WP_REST_Request( array( 'url' => 'https://example.com/?p=7', 'title' => 'Draft title' ) ) );

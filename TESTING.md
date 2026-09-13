@@ -1,201 +1,194 @@
-> Copy of `documentation/seo-test-plan.md` in the private 4all-automations repo (kept in step by hand). Layers 0, 1 and the plugin parts of 4 concern this plugin directly; layers 2–5 drive it through the automations tools.
+# Testing the 4All SEO Bridge
 
-# Test plan — SEO scripts and the bridge plugin (post-mode, drafts, H1, slugs, 0.2.x)
+Three layers, from safest to most real. Only move to the next layer when
+the previous one is clean.
 
-How to exercise everything built 2026-09-11/12 without touching a client's
-live data until the last step. Work top to bottom; each layer assumes the
-one above passed. Tick the boxes in a copy of this file or in the run log.
+| Layer | What it proves | Needs | Cost |
+|---|---|---|---|
+| 1. Stub tests | every branch of the plugin's own logic | PHP on the dev machine (CI runs it too) | seconds |
+| 2. Local WordPress | real `url_to_postid`, REST validation, Yoast, core's updater | Docker + Node (`wp-env`) | minutes |
+| 3. Staging, then one production site | the real hosts, caches, credentials and the automations CLI | a WP Engine staging env; an Application Password | one careful afternoon |
 
-## Safety rules that make this exhaustive *and* safe
+## Layer 1 — stub tests (no WordPress)
 
-1. **Never test on a client's sheet.** In Drive, *File → Make a copy* of a
-   real SEO sheet (iO Theater is a good one: Pages, Images, Keywords with
-   topics) and use the copy. Delete it at the end. Nothing in the scripts
-   writes to a sheet it was not given.
-2. **Never `--apply` against a production site during testing.** Every push
-   path is a dry run by default and prints the exact before/after; the dry
-   run is the test. Apply only on the sandbox WordPress (layer 1) or, at the
-   very end, on one production post you choose.
-3. **Sandbox WordPress.** Either a WP Engine staging environment for a client
-   that has Yoast, or **Local** (localwp.com) on your machine with Yoast
-   installed. It needs: an Editor/Admin Application Password, one published
-   post with a featured image, one published page, and (created during
-   layer 4) one draft with two inline images and no featured image.
-   Save its credentials in `wp-sites.json` by answering the prompt once.
-4. **Keep `--debug`** on script runs during testing: it writes every packet
-   the model saw to `temp/`, which is how you check the flows sent the
-   right inputs (`want_h1`, `topic`, `post`, inherited keywords).
-5. **Cost.** A post-mode run on 1–3 posts is a few cents of model time; a
-   site run on the copied sheet is the usual site cost. `output/seo-runs.jsonl`
-   records tokens per run.
+```
+php -l 4all-seo-bridge.php
+php tests/run.php                 # SEO=yoast (default)
+SEO=rankmath php tests/run.php
+SEO=none php tests/run.php
+```
 
-## What "pass" looks like, per layer
+`tests/run.php` stubs the WordPress functions the plugin calls and drives
+every handler and filter directly. CI (`lint.yml`) runs it on PHP 7.4 and
+8.3 for every push. It cannot see what real WordPress, Yoast or a host
+does — that is Layers 2 and 3.
 
-### Layer 0 — automated, no network (5 min)
+## Layer 2 — disposable local WordPress (`wp-env`)
 
-- [ ] Automations repo: `npm test` → 78 passing.
-- [ ] Plugin repo: `php -l 4all-seo-bridge.php`; `php tests/run.php` with
-      `SEO=yoast`, `SEO=rankmath`, `SEO=none`; `git log` shows the lint
-      workflow green on the last push.
+`.wp-env.json` in this repo maps the checkout in as the `4all-seo-bridge`
+plugin and installs Yoast. Docker Desktop must be running.
 
-### Layer 1 — the plugin on the sandbox WordPress (30 min)
+```
+npx @wordpress/env start          # first run downloads WordPress + images
+npx @wordpress/env run cli wp rewrite structure '/%postname%/'
+npx @wordpress/env run cli wp user application-password create admin bridge --porcelain
+```
 
-Install the 0.2.x zip (Plugins → Add New → Upload → Replace). Use a REST
-client or `curl -u user:app-password`.
+Site: http://localhost:8888 (admin / password). The last command prints an
+Application Password; use it below.
 
-| Check | Call | Pass when |
-|---|---|---|
-| Version | `GET /wp-json/4all/v1/ping` | `version` is the release, `capabilities` lists `seo_read`, `resolve_query_vars` |
-| Read by URL | `GET /4all/v1/seo?url=<published post permalink>` | `current.title/metadesc` match Yoast's fields; `post_type: post`, `post_status: publish`, `slug`, `url` |
-| Read by id | `GET /4all/v1/seo?id=<same id>` | identical response |
-| Draft target | `GET /4all/v1/seo?url=https://<site>/?p=<draft id>` | resolves the draft (`post_status: draft`), **not** the homepage |
-| Bad query var | `…/?p=abc` | 400 `bad_query_var` (0.2.1) |
-| Unknown id | `…/?p=99999999` | 404 `not_found` |
-| Front page | `GET /4all/v1/seo?url=https://<site>/` | the static front page, or 422 `blog_index_not_supported` on a posts-index home |
-| Staging path match | with the site's *production* hostname in the URL but the staging host in the request: `GET …/4all/v1/seo?url=https://www.<prod>/<known-path>/` | resolves by path (`path_match` internally) |
-| Dry-run write | `POST /4all/v1/seo` `{ url, title: "Test <b>bold</b> & < 5%", dry_run: true }` | `before` unchanged on the site; `after.title` is `Test bold & < 5%` (tags stripped, `<` and `%` kept); `changed.title: true`; nothing written |
-| Real write + log | same without `dry_run` on a **test post** | Yoast field updated; `wp-content/debug.log` / server log has one `[4all-seo-bridge]` line |
-| Yoast renders it | purge cache, view page source | `<title>` shows the new value (this is the open "indexables" question — if the old title persists, note it) |
-| Alt by URL | `POST /4all/v1/alt` with a `-scaled` / `-300x200` variant URL, `dry_run: true` | resolves to the attachment |
-| Empty value | `POST /4all/v1/seo` `{ url, title: "" }` | treated as a value change to empty? **Expected:** the CLI never sends empties; the bridge writes what it is sent — confirm the CLI side skips blanks (layer 3) |
+### 2a. Live matrix (`tests/live.mjs`)
 
-Self-update (needs two releases):
+```
+BASE=http://localhost:8888 WP_USER=admin WP_PASS='<app password>' node tests/live.mjs
+```
 
-- [ ] With 0.2.0 installed, tag and release 0.2.1 (the other session has it
-      ready). Dashboard → Updates → *Check again* → the bridge lists 0.2.1
-      with a working *View details*.
-- [ ] Update from the screen → `/ping` shows 0.2.1.
-- [ ] Auto-update: install 0.2.0 again, release 0.2.2 (or re-tag), wait for
-      the next cron pass (or trigger with `wp cron event run wp_update_plugins`
-      then `wp_maybe_auto_update`) → updates without a click.
-- [ ] Opt-out: add `define( 'FOURALL_SEO_BRIDGE_AUTO_UPDATE', false );`,
-      repeat → offered but not auto-applied.
+Creates its own fixtures through core REST (published post, parent +
+child page, draft post, 1×1 PNG), then checks:
 
-### Layer 2 — site run on the copied sheet (20 min + model time)
+- `/ping`: version, `seo_plugin`, capabilities; anonymous refused.
+- Resolution: permalink, `id`, nested page, fragment, draft by `?p=` and by
+  preview link, `?page_id=`, `?attachment_id=`, foreign host + same path
+  (`path_match`), foreign host + `?p=`.
+- Errors with codes: `?p=abc` / `?p=` / `?p=0` → 400 `bad_query_var`
+  (also on a real permalink), unknown `?p=` / id / path → 404, no target →
+  400, `id=abc` → 400 from the REST schema, front page → page or 422.
+- `POST /seo`: dry run writes nothing; apply with quotes, apostrophe,
+  ampersand, en dash, accents, `<` + space; GET reads them back; same value
+  → unchanged; empty string clears; draft push by `?p=`; `?p=abc` → 400.
+- Yoast: after the apply, `yoast_head_json.title` on the core REST post and
+  the rendered `<title>` both contain the pushed title (the indexables
+  check).
+- `POST /alt`: dry run, `-300x200` and `-scaled` suffixes, apply, core REST
+  reads the alt back, unknown image → 404, missing `alt` → 400.
+- Optional Subscriber checks (`SUB_USER` / `SUB_PASS`): every route → 403
+  and nothing written.
+- Restores the SEO fields it changed and deletes its fixtures (`KEEP=1` to
+  keep them).
 
-`seo-meta --sheet "<copy>" --h1 --slug --debug`, page phase only is enough
-(answer no to images), review yes.
+Subscriber credentials for the permission checks:
 
-- [ ] Log shows `Loaded N pages, 90 keyword rows` (header-based read) and
-      `Writer: … · H1 on · slug all`.
-- [ ] `H1 (Revised)` inserted after `H1`; `Slug (Revised)` appended; both
-      filled only where the writer proposed something.
-- [ ] `temp/seo-page-*-b01-input.json`: `want_h1: true`, `want_slug: "all"`,
-      keywords keyed by URL (not by topic name).
-- [ ] Lint block prints, and Review Notes carry `[lint]` lines. Look for at
-      least one of `meta_keyword_absent`, `hub_breadth_lost`, `h1_*`, `slug_*`
-      on a site of this size; none is also fine, but check the categories
-      spelled in the notes match `seo-lint.js`.
-- [ ] Review replaced values show `[review] replaced …: was «…»`; an H1
-      replacement (if any) lands in `H1 (Revised)`.
-- [ ] `output/seo-runs.jsonl` last line has `h1: true`, `h1_proposed`,
-      `slug_policy: "all"`, `slugs_proposed`.
-- [ ] Re-run `seo-review --sheet "<copy>" --only <one landing page>` →
-      only that page is reviewed; H1 and slug columns are linted.
+```
+npx @wordpress/env run cli wp user create sub sub@example.com --role=subscriber --user_pass=subpass
+npx @wordpress/env run cli wp user application-password create sub bridge --porcelain
+```
 
-### Layer 3 — post mode with live posts, on the copied sheet (20 min + model)
+### 2b. Posts-index front page
 
-Pick two published blog posts from the site, one already on the sheet and
-one not. `seo-post --sheet "<copy>" --posts <url1>,<url2> --debug`.
+```
+npx @wordpress/env run cli wp option update show_on_front posts
+curl -u "admin:<app password>" "http://localhost:8888/wp-json/4all/v1/seo?url=http://localhost:8888/"
+# → 422 blog_index_not_supported
+npx @wordpress/env run cli wp option update show_on_front page
+npx @wordpress/env run cli wp option update page_on_front <a page id>
+# → 200 with that page
+```
 
-- [ ] Scan: both fetched; Images tab rows for them replaced/added.
-- [ ] Upsert log: `Pages: 1 added, 1 refreshed`; the refreshed row kept its
-      Revised / Review Notes / Topic cells; only scan columns changed.
-- [ ] Topic prompt lists `Main › Sub (N keywords)`; the "use for remaining"
-      shortcut works; `Main Topic` / `Sub Topic` written (columns appended).
-- [ ] Packet (`temp/…-b01-input.json`): each post has `topic { main, sub,
-      landing_page }` and keyword rows with `inherited: true` keyed to the
-      post URL; `want_h1: true`, `want_slug: "drafts"` (so **no slug** for
-      these published posts), no `post` field (not read via REST).
-- [ ] Titles carry the subtopic phrase plus the post's angle, not the
-      landing page's title; H1 proposed; Slug (Revised) **blank**.
-- [ ] Review scoped to the two posts only.
-- [ ] Push offer: accept → dry runs print for pages and images (no slug
-      half: no drafts). **Decline apply.** The printed `wp-push … --only …
-      --apply` command is correct.
-- [ ] Run the post again → topic prompt defaults to the saved topic;
-      overwrite confirmation appears; nothing duplicated.
-- [ ] Missing-tab path: copy the sheet again, delete its Images tab, run
-      post mode → "Added missing tab(s) from the template: Images".
+### 2c. Updater, without publishing a release
 
-### Layer 4 — drafts, sandbox WordPress + copied sheet (30 min + model)
+Detection, details panel, auto-update filter and Check again, against
+core's real updater, in one command (installs nothing, leaves no
+transients behind):
 
-On the sandbox: create a draft post with a headline, ~600 words, two
-inline images, **no** featured image, in the same topic area as one of the
-sheet's subtopics. Copy its editor link.
+```
+npx @wordpress/env run cli wp eval-file wp-content/plugins/4all-seo-bridge/tests/wp-updater-probe.php
+```
 
-- [ ] `seo-post --sheet "<copy>" --posts "<editor link>" --debug` → log:
-      `1 post(s) by id on <host> — reading through WordPress REST`,
-      `Drafts in this run: 1`, `Added post columns: WP Post ID, Status, …`.
-- [ ] Pages row keyed `https://<host>/?p=<id>`, `Status: draft`, `WP Post ID`,
-      current `Slug`; Images rows for the two inline images (from
-      `content.rendered`, `?p=` page URL).
-- [ ] Packet: page has `post { id, status: "draft", slug, featured_image:
-      false }`, `want_slug: "drafts"`, `want_featured_image: true`; body
-      text present (REST, not HTTP).
-- [ ] Output: title, meta, `H1 (Revised)`, `Slug (Revised)` (2–6 words,
-      keyword-led), `Featured Image (Recommended)` / `Featured Filename` /
-      `Featured Alt` filled; lint shows any `slug_*` findings.
-- [ ] Image phase: alts for the two inline images; body context came
-      through (`Pre-fetched 1 page(s)`, no failure).
-- [ ] Review: works on the draft (`seo-review --sheet "<copy>" --only
-      "https://<host>/?p=<id>"` standalone too).
-- [ ] Push offer: pages dry run **succeeds on the `?p=` URL** (bridge 0.2.x)
-      and shows before/after; images dry run; **slug half** dry run shows
-      the slug change. Apply on the sandbox → Yoast fields, alts, and slug
-      updated; the plan warned about nothing unexpected.
-- [ ] Drift warning: point `wp-push` at a site still on 0.1.1 with a `?p=`
-      URL in scope → the warning names 0.1.1 vs 0.2.0 and says drafts will
-      come back "not found".
-- [ ] Publish the draft in WordPress, run post mode on it again (editor
-      link or permalink) → `1 refreshed (1 re-keyed to the live URL)`; row
-      URL is now the permalink; `Status: publish`; **Slug (Revised)** no
-      longer proposed (published) unless `--slug`.
-- [ ] `wp-push "<copy>" --slug --only <permalink>` → the slug change is
-      **held** ("published — needs a redirect"); with
-      `--allow-slug-change` it is planned; apply on the sandbox → check the
-      old URL (redirect only if Yoast Premium/RankMath).
-- [ ] `wp-push "<copy>" --headline --only <permalink>` → `H1 (Revised)`
-      planned for the post; try the same on a **page** row with an H1 →
-      held ("visible H1 is rarely post_title").
-- [ ] Not-allowed path: an Application Password for a *Contributor* on a
-      draft by another author → `Not fetchable (not allowed)`.
-- [ ] No-credentials path: decline the prompt → `Not fetchable (no
-      credentials)`; run continues with the other posts.
+It fetches the real manifest from GitHub, confirms core files the
+installed version under `no_update` or `response` correctly, seeds a fake
+9.9.9 manifest and confirms core lists it (package, slug, id), builds the
+details panel, checks the `auto_update_plugin` answer, and simulates
+**Check again** as a logged-out user (cache kept) and as an admin (cache
+dropped, core refetches the real manifest).
 
-### Layer 5 — one real post on one client site (15 min)
+To also exercise the **install** step (core downloading and unpacking the
+zip in place), seed the cache with a locally served zip as below. Do not
+run `wp plugin update` while `.wp-env.json` maps this checkout in as the
+plugin: the upgrader deletes the plugin folder first, and that folder is
+your working copy. Remove `"."` from `plugins` and restart, or use a
+plain Local/Docker WordPress, for that step.
 
-Only after layers 1–4. Choose one published post the client will not miss
-and one site that has 0.2.x installed.
+1. Install the **previous** release on the local site so there is
+   something to update from:
+   ```
+   npx @wordpress/env run cli wp plugin install https://github.com/proximodev/4all-seo-bridge/releases/download/v0.2.0/4all-seo-bridge.zip --force --activate
+   ```
+   (`wp-env` maps this checkout over the plugin folder; to test the
+   upgrade for real, temporarily remove `"."` from `plugins` in
+   `.wp-env.json` and restart, or use a plain Local/Docker WordPress.)
+2. Build the candidate zip the way the release workflow does and serve it
+   from the site's uploads folder:
+   ```
+   mkdir -p build/4all-seo-bridge && cp 4all-seo-bridge.php LICENSE README.md CHANGELOG.md build/4all-seo-bridge/
+   (cd build && zip -qr ../4all-seo-bridge.zip 4all-seo-bridge)
+   npx @wordpress/env run cli mkdir -p wp-content/uploads/bridge
+   docker cp 4all-seo-bridge.zip $(docker ps -qf name=wordpress):/var/www/html/wp-content/uploads/bridge/
+   ```
+3. Seed the manifest cache:
+   ```
+   npx @wordpress/env run cli wp eval 'set_site_transient("fourall_seo_bridge_manifest", array("name"=>"4All SEO Bridge","slug"=>"4all-seo-bridge","version"=>"0.2.1","download_url"=>"http://localhost:8888/wp-content/uploads/bridge/4all-seo-bridge.zip","requires"=>"6.0","requires_php"=>"7.4","tested"=>"6.6"), 43200);'
+   npx @wordpress/env run cli wp plugin list --fields=name,version,update,update_version
+   ```
+   Expect `update=available`, `update_version=0.2.1`. **Dashboard →
+   Updates** lists it; **View details** opens the panel.
+4. Apply it: `npx @wordpress/env run cli wp plugin update 4all-seo-bridge` (or the
+   screen, or `wp cron event run wp_version_check` for the auto-update
+   path). `/ping` → `0.2.1`; the folder is still `4all-seo-bridge/`.
+5. Check again clears the cache: seed the transient as in step 3, then
+   load `http://localhost:8888/wp-admin/update-core.php?force-check=1`
+   logged in as admin. `wp transient get fourall_seo_bridge_manifest
+   --network` → empty (core's own check then refetches the real manifest).
 
-- [ ] `seo-post --sheet "<the client's real sheet>" --posts <permalink>`
-      end to end; at the push offer accept **apply** for pages + images.
-- [ ] Verify in WP admin (Yoast fields, media alt), purge FlyingPress + WP
-      Engine cache, view source.
-- [ ] Note the run in `output/seo-runs.jsonl` and, if anything looked off,
-      the Review Notes `was «…»` values are the rollback reference.
+Alternatively, on any site, `define( 'FOURALL_SEO_BRIDGE_MANIFEST_URL',
+'https://…/manifest.json' );` in `wp-config.php` points the plugin at a
+test manifest (0.2.1+).
 
-## Rollback, per kind of change
+Tear down: `npx @wordpress/env stop` (keeps the site) or
+`npx @wordpress/env destroy`.
 
-| Change | Undo |
+### Layer 2 results — 2026-09-12, WordPress 7.1 / PHP 8.x / Yoast 28.4, plugin 0.2.1
+
+| Check | Result |
 |---|---|
-| Sheet edits | you were on a copy; delete it. On a real sheet, Review Notes hold the previous Revised values (`was «…»`), and the scan columns are re-scanned every run |
-| Yoast title / meta | no WordPress revision; re-push the previous value (`before` in the dry-run plan, or the Review Notes) or edit in Yoast |
-| Media alt | same: re-push or edit in the media library |
-| Slug | WordPress keeps old slugs on posts (`_wp_old_slug`) and redirects them itself for posts; for pages add a redirect. Or set the slug back |
-| Headline (`post_title`) | a post revision exists; restore from Revisions |
-| Plugin | Plugins → Add New → Upload the previous release zip → Replace |
+| `tests/live.mjs` with Subscriber checks | 79 checks, 0 failed |
+| Yoast renders the pushed title (`yoast_head_json.title` and the page `<title>`) | passes — no indexable-builder call needed |
+| Posts-index front page → 422 `blog_index_not_supported`; static front page → that page | as designed |
+| `tests/wp-updater-probe.php` | all ok — real manifest fetched from GitHub inside the container |
+| Real install/upgrade of the zip by core | **not run** (checkout is bind-mounted; see 2c) |
 
-## Order and time
+Found by Layer 2 and fixed in 0.2.1: Yoast's own sanitizer stores `<` and
+`&` as entities on its meta keys, so `after` now reports what was
+actually stored and a stored value that decodes to the requested one
+counts as unchanged (otherwise every run re-pushed such rows).
 
-Layer 0 (5 min) → 1 (30) → 2 (20 + model) → 3 (20 + model) → 4 (30 + model)
-→ 5 (15). About three hours end to end, spread over as many sessions as
-you like; layers 2–4 can each run in one sitting.
+## Layer 3 — staging, then production
 
-## Recording results
+1. Build the zip (step 2c.2) and upload it to a WP Engine **staging**
+   environment via Plugins → Add New → Upload → Replace.
+2. Read-only pass against it:
+   ```
+   READONLY=1 URLS=https://staging.example/a/,https://staging.example/b/ BASE=https://staging.example WP_USER=<user> WP_PASS='<app password>' node tests/live.mjs
+   ```
+3. Full pass (fixtures are created and removed; existing content untouched):
+   ```
+   BASE=https://staging.example WP_USER=<user> WP_PASS='<app password>' node tests/live.mjs
+   ```
+4. From the automations repo: `wp-seo-push` / `wp-push` in dry-run mode
+   against staging; the drift warning should be gone and a `?p=` draft
+   push should resolve.
+5. Tag the release (`git tag vX.Y.Z && git push origin --tags`).
+6. **One** production site first (ioimprov.com is the one already exercised
+   live): upload the release zip, `READONLY=1` pass, one real push on one
+   post with the CLI, view source after a cache purge. Then the rest.
 
-Append a dated section to this file, or a line per layer to the run log,
-with anything that did not match the "pass when" column. Two things are
-expected to be learned here rather than known: whether Yoast serves a
-pushed title without an indexable rebuild (layer 1), and how the writer's
-slugs and featured-image briefs read on a real draft (layer 4).
+## Safety rails
+
+- Every `POST` response carries `before`; keep the JSON and any value can
+  be restored by pushing it back.
+- The plugin stores no settings; rolling back is re-uploading the previous
+  zip from GitHub Releases.
+- Every applied write logs one `[4all-seo-bridge]` line on the host.
+- Use `dry_run` / the CLI's dry-run mode until GET results look right.
+- `define( 'FOURALL_SEO_BRIDGE_AUTO_UPDATE', false );` in a production
+  `wp-config.php` holds a site on its current version while you watch the
+  update path on staging.

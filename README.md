@@ -96,10 +96,18 @@ id is `not_found` (404), never the front page), the static front page for an
 empty path, `url_to_postid()`, and finally the same path rebuilt on this
 site's `home_url()` when the request host differs (a production sheet
 pushed to staging). Only fields that are sent are touched, and only when
-they differ; `dry_run` computes the diff without writing. Values are
+they differ; `dry_run` computes the diff without writing. `after` is what
+the SEO plugin actually stored (Yoast escapes `<` and `&` on its keys), and
+a stored value that decodes to the requested one counts as unchanged. Values are
 cleaned (invalid UTF-8 rejected, tags stripped, control characters
 removed, whitespace collapsed) but not truncated. Every applied write logs
 one `error_log` line. Empty values cannot be pushed.
+
+## Testing
+
+See [`TESTING.md`](TESTING.md): stub tests (`tests/run.php`, also in CI), a
+disposable local WordPress (`.wp-env.json`) with a live matrix
+(`tests/live.mjs`), and the staging → production checklist.
 
 ## Releasing
 

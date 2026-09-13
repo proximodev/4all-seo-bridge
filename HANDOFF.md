@@ -13,8 +13,8 @@ Claude Code session).
 | CI: lint on push/PR (PHP 7.4 + 8.3, header/constant version check) | **done**, green |
 | CI: release on `v*` tag (lint, tag = header check, zip + manifest attached) | **done**; `v0.2.0` released, assets fetch anonymously |
 | Client sites | **all still on 0.1.1** — each needs one manual upload of 0.2.0; afterwards updates arrive through WordPress |
-| Live verification of 0.2.0 on a WordPress site (`GET /seo`, a `?p=` push, the Plugins screen offering an update) | **not done** |
-| Yoast indexables check (does a pushed title render after cache purge?) | **not done**; needs a live Yoast site |
+| Live verification on a WordPress site (`GET /seo`, a `?p=` push, the Plugins screen offering an update) | **done locally** 2026-09-12 (wp-env + Yoast 28.4; results in `TESTING.md`); the real zip install by core and a client host remain (Layer 3) |
+| Yoast indexables check (does a pushed title render after cache purge?) | **done locally**: `yoast_head_json.title` and the rendered `<title>` carry the pushed title; no indexable-builder call needed |
 | Local PHP for linting before pushing | **done on Doug's machine** (PHP 8.4.24 via winget, 2026-09-12); CI still lints every push; see below |
 
 **No further plugin changes are required.** Do not re-implement anything
@@ -129,6 +129,9 @@ CHANGELOG.md
 LICENSE               GPL-2.0
 .github/workflows/    lint.yml (push/PR: php -l + tests/run.php), release.yml (v* tags)
 tests/run.php         stub-based tests, no WordPress needed (not in the zip)
+tests/live.mjs        live matrix against a real site (creates + removes its own fixtures)
+.wp-env.json          disposable local WordPress + Yoast for Layer 2 (npx @wordpress/env start)
+TESTING.md            the three-layer test plan: stub → local WordPress → staging/production
 HANDOFF.md            this file
 ```
 
@@ -150,9 +153,11 @@ folder name WordPress expects for in-place updates.
 ## Open items
 
 - First live 0.2.0 install and the update-path check above.
-- Yoast indexables: after a real `POST /seo --apply` and a cache purge,
-  confirm the new `<title>` renders. If Yoast still serves the old one,
-  add a guarded call to Yoast's indexable builder after `update_post_meta`.
+- Yoast indexables: verified locally (see `TESTING.md`); re-confirm once on
+  a client host with its page cache purged.
+- Layer 3 of `TESTING.md`: staging pass with `tests/live.mjs`, then one
+  production site. The real zip install by core has only been reasoned
+  about, not observed (the local checkout is bind-mounted).
 - Decide whether auto-update should stay on by default for client sites,
   or be opt-in per site (currently on; one constant flips it).
 - Nice to have: `phpcs` in the lint workflow once the file passes it.
