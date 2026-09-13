@@ -105,9 +105,11 @@ one `error_log` line. Empty values cannot be pushed.
 
 ## Testing
 
-See [`TESTING.md`](TESTING.md): stub tests (`tests/run.php`, also in CI), a
-disposable local WordPress (`.wp-env.json`) with a live matrix
-(`tests/live.mjs`), and the staging → production checklist.
+[`TESTING.md`](TESTING.md) is the full test plan for the plugin and the
+SEO tools that drive it. [`tests/README.md`](tests/README.md) covers the
+plugin half: stub tests (`tests/run.php`, also in CI), a disposable local
+WordPress (`.wp-env.json`) with a live matrix (`tests/live.mjs`) and an
+updater probe, and the staging → production checklist.
 
 ## Releasing
 

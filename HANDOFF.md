@@ -13,7 +13,7 @@ Claude Code session).
 | CI: lint on push/PR (PHP 7.4 + 8.3, header/constant version check) | **done**, green |
 | CI: release on `v*` tag (lint, tag = header check, zip + manifest attached) | **done**; `v0.2.0` released, assets fetch anonymously |
 | Client sites | **all still on 0.1.1** — each needs one manual upload of 0.2.0; afterwards updates arrive through WordPress |
-| Live verification on a WordPress site (`GET /seo`, a `?p=` push, the Plugins screen offering an update) | **done locally** 2026-09-12 (wp-env + Yoast 28.4; results in `TESTING.md`); the real zip install by core and a client host remain (Layer 3) |
+| Live verification on a WordPress site (`GET /seo`, a `?p=` push, the Plugins screen offering an update) | **done locally** 2026-09-12 (wp-env + Yoast 28.4; results in `tests/README.md`); the real zip install by core and a client host remain (TESTING.md Layers 1 on staging, 5) |
 | Yoast indexables check (does a pushed title render after cache purge?) | **done locally**: `yoast_head_json.title` and the rendered `<title>` carry the pushed title; no indexable-builder call needed |
 | Local PHP for linting before pushing | **done on Doug's machine** (PHP 8.4.24 via winget, 2026-09-12); CI still lints every push; see below |
 
@@ -130,8 +130,10 @@ LICENSE               GPL-2.0
 .github/workflows/    lint.yml (push/PR: php -l + tests/run.php), release.yml (v* tags)
 tests/run.php         stub-based tests, no WordPress needed (not in the zip)
 tests/live.mjs        live matrix against a real site (creates + removes its own fixtures)
-.wp-env.json          disposable local WordPress + Yoast for Layer 2 (npx @wordpress/env start)
-TESTING.md            the three-layer test plan: stub → local WordPress → staging/production
+tests/wp-updater-probe.php  core's real updater, via wp eval-file
+tests/README.md       plugin test tooling + Layer 2 results
+.wp-env.json          disposable local WordPress + Yoast (npx @wordpress/env start)
+TESTING.md            the six-layer plan for plugin + SEO tools (copy of the automations repo's seo-test-plan.md)
 HANDOFF.md            this file
 ```
 
@@ -153,11 +155,11 @@ folder name WordPress expects for in-place updates.
 ## Open items
 
 - First live 0.2.0 install and the update-path check above.
-- Yoast indexables: verified locally (see `TESTING.md`); re-confirm once on
-  a client host with its page cache purged.
-- Layer 3 of `TESTING.md`: staging pass with `tests/live.mjs`, then one
-  production site. The real zip install by core has only been reasoned
-  about, not observed (the local checkout is bind-mounted).
+- Yoast indexables: verified locally (see `tests/README.md`); re-confirm
+  once on a client host with its page cache purged.
+- `TESTING.md` Layers 1 (on staging, with `tests/live.mjs`) through 5. The
+  real zip install by core has only been reasoned about, not observed (the
+  local checkout is bind-mounted; see `tests/README.md` 2c).
 - Decide whether auto-update should stay on by default for client sites,
   or be opt-in per site (currently on; one constant flips it).
 - Nice to have: `phpcs` in the lint workflow once the file passes it.
