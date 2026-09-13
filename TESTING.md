@@ -1,4 +1,4 @@
-> Copy of `documentation/seo-test-plan.md` in the private 4all-automations repo (kept in step by hand). Layers 0, 1 and the plugin parts of 4 concern this plugin directly; layers 2–5 drive it through the automations tools.
+> Copy of `documentation/seo-test-plan.md` in the private 4all-automations repo (kept in step by hand; that file is authoritative for layers 2–5, this repo's `tests/README.md` for the plugin tooling). Layers 0, 1 and the plugin parts of 4 concern this plugin directly; layers 2–5 drive it through the automations tools.
 
 # Test plan — SEO scripts and the bridge plugin (post-mode, drafts, H1, slugs, 0.2.x)
 
@@ -28,6 +28,12 @@ one above passed. Tick the boxes in a copy of this file or in the run log.
 5. **Cost.** A post-mode run on 1–3 posts is a few cents of model time; a
    site run on the copied sheet is the usual site cost. `output/seo-runs.jsonl`
    records tokens per run.
+6. **Local WordPress via `wp-env`:** never run `wp plugin update 4all-seo-bridge`
+   while `.wp-env.json` maps the checkout in as the plugin — the upgrader
+   deletes the plugin folder first, and that folder is your working copy.
+   Remove `"."` from `plugins` and restart, or use a plain Local/Docker
+   WordPress, for the install step (details in the plugin repo's
+   `tests/README.md`).
 
 ## What "pass" looks like, per layer
 
@@ -41,16 +47,18 @@ one above passed. Tick the boxes in a copy of this file or in the run log.
 ### Layer 1 — the plugin on the sandbox WordPress (30 min)
 
 > **Automated (2026-09-12):** every row of this table, the Subscriber
-> permission checks and the self-update detection run from
-> `tests/live.mjs` and `tests/wp-updater-probe.php` against a disposable
-> local WordPress (`.wp-env.json`); see [`tests/README.md`](tests/README.md)
+> permission checks and the self-update detection run from the plugin
+> repo's `tests/live.mjs` and `tests/wp-updater-probe.php` against a
+> disposable local WordPress (`.wp-env.json`); see its `tests/README.md`
 > for the commands and the recorded results (all green on WordPress 7.1 +
 > Yoast 28.4, plugin 0.2.1). The manual table below is still the reference
 > for a WP Engine staging environment; `tests/live.mjs` has a `READONLY=1`
 > mode for that too.
 
 Install the 0.2.x zip (Plugins → Add New → Upload → Replace). Use a REST
-client or `curl -u user:app-password`.
+client or `curl -u user:app-password`. **Gap:** every sandbox so far is
+Yoast; if any client runs RankMath, repeat this table once on a RankMath
+site (the meta keys differ: `rank_math_title` / `rank_math_description`).
 
 | Check | Call | Pass when |
 |---|---|---|
@@ -69,11 +77,13 @@ client or `curl -u user:app-password`.
 | Empty value | `POST /4all/v1/seo` `{ url, title: "" }` | **confirmed:** an explicit empty string clears the field; the CLI never sends empties (`pushOne` skips blanks) — confirm on the CLI side (layer 3) |
 | Escaped by Yoast | `POST /4all/v1/seo` `{ url, metadesc: "a < b & c" }` twice | first: `changed: true`, `after.metadesc` is `a &lt; b &amp; c` (what Yoast stored, 0.2.1); second: `changed: false` |
 
-Self-update (needs two releases):
+Self-update (needs two releases). **As of 2026-09-12: 0.2.1 is committed
+in the plugin repo's `main` but not tagged — the only release is `v0.2.0`.**
+Nothing below can run until `git tag v0.2.1 && git push origin main --tags`.
 
-- [ ] With 0.2.0 installed, tag and release 0.2.1 (the other session has it
-      ready). Dashboard → Updates → *Check again* → the bridge lists 0.2.1
-      with a working *View details*.
+- [ ] With 0.2.0 installed, tag and release 0.2.1. Dashboard → Updates →
+      *Check again* → the bridge lists 0.2.1 with a working *View details*
+      (0.2.1 also clears its manifest cache on *Check again*, so no wait).
 - [ ] Update from the screen → `/ping` shows 0.2.1.
 - [ ] Auto-update: install 0.2.0 again, release 0.2.2 (or re-tag), wait for
       the next cron pass (or trigger with `wp cron event run wp_update_plugins`
@@ -106,7 +116,11 @@ Self-update (needs two releases):
 ### Layer 3 — post mode with live posts, on the copied sheet (20 min + model)
 
 Pick two published blog posts from the site, one already on the sheet and
-one not. `seo-post --sheet "<copy>" --posts <url1>,<url2> --debug`.
+one not. `seo-post --sheet "<copy>" --posts <url1>,<url2> --debug`. Use a
+copy of a sheet that **has a `Page Views` column** (the iO copy does), so
+the upsert's blank-views path on a GA4 sheet is covered — the appended
+rows must have an empty Page Views cell and must not be removed as
+"zero views" by the flows.
 
 - [ ] Scan: both fetched; Images tab rows for them replaced/added.
 - [ ] Upsert log: `Pages: 1 added, 1 refreshed`; the refreshed row kept its
@@ -154,13 +168,23 @@ sheet's subtopics. Copy its editor link.
       and shows before/after; images dry run; **slug half** dry run shows
       the slug change. Apply on the sandbox → Yoast fields, alts, and slug
       updated; the plan warned about nothing unexpected.
+- [ ] Entity check: give the draft a Yoast title containing `&` (and, if
+      you like, `<`). After the read, the sheet's `Page Title` cell for the
+      draft shows a plain `&`. **Known today:** it shows `&amp;`, because the
+      reader copies Yoast's stored (entity-encoded) string and the push
+      plan prints `before` the same way — item (c) in
+      [`4all-seo-bridge-0.2.1-brief.md`](4all-seo-bridge-0.2.1-brief.md).
+      Record the result either way.
 - [ ] Drift warning: point `wp-push` at a site still on 0.1.1 with a `?p=`
-      URL in scope → the warning names 0.1.1 vs 0.2.0 and says drafts will
-      come back "not found".
+      URL in scope → the warning names 0.1.1 vs `BRIDGE_MIN_VERSION`
+      (0.2.0 today; the 0.2.1 brief proposes raising it) and says drafts
+      will come back "not found".
 - [ ] Publish the draft in WordPress, run post mode on it again (editor
       link or permalink) → `1 refreshed (1 re-keyed to the live URL)`; row
-      URL is now the permalink; `Status: publish`; **Slug (Revised)** no
-      longer proposed (published) unless `--slug`.
+      URL is now the permalink; `Status: publish`; **no new slug** is
+      proposed (published) unless `--slug`. Note the `Slug (Revised)` cell
+      still holds the value from the draft run — a null from the writer
+      never blanks a cell — which is what the next check pushes against.
 - [ ] `wp-push "<copy>" --slug --only <permalink>` → the slug change is
       **held** ("published — needs a redirect"); with
       `--allow-slug-change` it is planned; apply on the sandbox → check the
@@ -176,7 +200,9 @@ sheet's subtopics. Copy its editor link.
 ### Layer 5 — one real post on one client site (15 min)
 
 Only after layers 1–4. Choose one published post the client will not miss
-and one site that has 0.2.x installed.
+and one site that has 0.2.x installed — if none does yet, do the one-time
+upload first (plugin repo `HANDOFF.md` → *Rolling 0.2.0 out to a site*),
+then confirm with `/ping`.
 
 - [ ] `seo-post --sheet "<the client's real sheet>" --posts <permalink>`
       end to end; at the push offer accept **apply** for pages + images.
@@ -205,7 +231,16 @@ you like; layers 2–4 can each run in one sitting.
 ## Recording results
 
 Append a dated section to this file, or a line per layer to the run log,
-with anything that did not match the "pass when" column. Two things are
-expected to be learned here rather than known: whether Yoast serves a
-pushed title without an indexable rebuild (layer 1), and how the writer's
-slugs and featured-image briefs read on a real draft (layer 4).
+with anything that did not match the "pass when" column. Still to be
+learned rather than known: how the writer's slugs and featured-image
+briefs read on a real draft (layer 4), and whether a client host behaves
+like the local sandbox on the Yoast render (answered locally on
+2026-09-12: no indexable rebuild needed; re-confirm once on a client host).
+
+## Log
+
+- 2026-09-12 — Layer 0 green in both repos. Layer 1 automated against a
+  local WordPress 7.1 + Yoast 28.4 with plugin 0.2.1 (`tests/live.mjs`,
+  `tests/wp-updater-probe.php`): all rows green; Yoast render and empty-value
+  behaviour answered; self-update *install* step not yet exercised (needs
+  the 0.2.1 release). Layers 2–5 not started.
